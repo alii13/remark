@@ -46,9 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkey: Any?
 
     func applicationDidFinishLaunching(_ note: Notification) {
-        signal(SIGPIPE, SIG_IGN)   // a write to a dead sidecar/claude pipe must not abort us
+        signal(SIGPIPE, SIG_IGN)   // a write to a dead claude pipe must not abort us
         NSApp.setActivationPolicy(.accessory)
         panel = PanelController(state: state)
+        _ = Updater.shared   // start checking for updates in the background
 
         let env = ProcessInfo.processInfo.environment
         if env["REMARK_DEMO"] == "1" {

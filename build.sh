@@ -33,9 +33,10 @@ swiftc -O \
   Sources/QuestionEngine.swift Sources/MeetingDetector.swift Sources/AppState.swift \
   Sources/ContextStore.swift Sources/Distiller.swift Sources/Logger.swift Sources/Paths.swift Sources/Setup.swift \
   Sources/UI/PanelView.swift Sources/UI/DropdownView.swift Sources/UI/SetupView.swift \
-  Sources/RemarkApp.swift \
+  Sources/RemarkApp.swift Sources/Updater.swift \
   -import-objc-header "$SHERPA/include/sherpa-onnx/c-api/c-api.h" -I "$SHERPA/include" \
   -L "$SHERPA/lib" -lsherpa-onnx-c-api \
+  -F vendor/sparkle -framework Sparkle \
   -o build/remark \
   -framework SwiftUI -framework AppKit -framework AudioToolbox \
   -framework AVFoundation -framework CoreMedia -framework CoreAudio \
@@ -46,6 +47,8 @@ cp build/remark "$APP/Contents/MacOS/Remark"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # the recognizer links these two dylibs; ship them inside the bundle
 cp "$SHERPA/lib/libsherpa-onnx-c-api.dylib" "$SHERPA/lib/libonnxruntime.dylib" "$APP/Contents/Frameworks/"
+# Sparkle (auto-update) framework
+cp -R vendor/sparkle/Sparkle.framework "$APP/Contents/Frameworks/"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -62,12 +65,22 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSMicrophoneUsageDescription</key><string>Remark listens to your meeting so it can suggest questions to ask.</string>
 <key>NSAudioCaptureUsageDescription</key><string>Remark records your meeting's audio on your Mac so it can suggest questions to ask.</string>
+<key>SUFeedURL</key><string>https://raw.githubusercontent.com/alii13/remark/main/appcast.xml</string>
+<key>SUPublicEDKey</key><string>r920y70cYrwzbsyqHJJSm4Mf0ozCf7TCRllE/Lz5dS0=</string>
+<key>SUEnableAutomaticChecks</key><true/>
+<key>SUScheduledCheckInterval</key><integer>86400</integer>
 </dict></plist>
 PLIST
 
 echo "signing (Developer ID, hardened runtime)…"
-# Sign the embedded dylibs first (with our Team ID, so hardened-runtime library validation
-# accepts them), then the app around them.
+# Sparkle's nested helpers must be signed (with our Team ID) deepest-first, before the framework.
+SF="$APP/Contents/Frameworks/Sparkle.framework"
+codesign --force --options runtime --timestamp --sign "$IDENTITY" "$SF/Versions/B/XPCServices/Downloader.xpc"
+codesign --force --options runtime --timestamp --sign "$IDENTITY" "$SF/Versions/B/XPCServices/Installer.xpc"
+codesign --force --options runtime --timestamp --sign "$IDENTITY" "$SF/Versions/B/Autoupdate"
+codesign --force --options runtime --timestamp --sign "$IDENTITY" "$SF/Versions/B/Updater.app"
+codesign --force --options runtime --timestamp --sign "$IDENTITY" "$SF"
+# Sign the embedded dylibs (same Team ID, so hardened-runtime library validation accepts them).
 for dylib in "$APP"/Contents/Frameworks/*.dylib; do
   codesign --force --options runtime --timestamp --sign "$IDENTITY" "$dylib"
 done

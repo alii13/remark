@@ -37,6 +37,8 @@ struct DropdownView: View {
                 Button("Quit Remark") { NSApp.terminate(nil) }
                     .buttonStyle(.plain).font(geist(13)).foregroundColor(Ink.faint)
                 Spacer()
+                Button("Check for Updates") { Updater.shared.checkForUpdates() }
+                    .buttonStyle(.plain).font(geist(13)).foregroundColor(Ink.faint)
             }.padding(.horizontal, 16).padding(.vertical, 11)
         }
         .frame(width: 320)
