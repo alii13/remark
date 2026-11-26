@@ -33,11 +33,9 @@ After each meeting, Remark distills what was said into an encrypted note on your
 You need macOS 14.4 or newer (Core Audio taps landed in 14.4) and the [Claude CLI](https://docs.claude.com/en/docs/claude-code) on your `PATH`.
 
 ```bash
-# 1. Set up the transcription sidecar: a Python venv + the Parakeet model.
-#    See sidecar/ for the sherpa-onnx install and the model files it expects
-#    under ./models/parakeet.
+# 1. Put the Parakeet model files under ./models/parakeet (see Credits for the source).
 
-# 2. Build the app. This ad-hoc signs it, which is enough to try it out.
+# 2. Build. This fetches the sherpa-onnx library, compiles, and ad-hoc signs the app.
 bash build.sh
 open build/Remark.app
 ```
@@ -65,7 +63,7 @@ Remark is a pipeline. Each stage lives in one file, so you can read it end to en
 | --- | --- | --- |
 | Detect the meeting | `Sources/MeetingDetector.swift` | Starts only when a real meeting app (Zoom, Teams, a Slack huddle, a browser call) holds the mic. It ignores dictation and background mic use, and reads no calendar. |
 | Capture the audio | `Sources/AudioCapture.swift` | Taps system output (and the mic if you turn it on) through Core Audio, and converts it to 16 kHz mono. It adapts to the output device's real sample rate, so Bluetooth headsets still transcribe. |
-| Transcribe it | `sidecar/transcribe_server.py` | Runs Parakeet through sherpa-onnx and streams text back. No audio leaves the machine. |
+| Transcribe it | `Sources/Recognizer.swift` | Runs the Parakeet model in-process through sherpa-onnx (no Python). No audio leaves the machine. |
 | Write the question | `Sources/QuestionEngine.swift` | Feeds the rolling transcript to a warm `claude -p` session, which answers with one line, `gap \| question`, or `-` to stay silent. |
 | Remember the meeting | `Sources/Distiller.swift`, `Sources/ContextStore.swift` | When the meeting ends, a one-shot `claude` distills the transcript, and Remark encrypts the result and folds it into a running profile. |
 
@@ -78,14 +76,13 @@ Remark is small and the pipeline is easy to follow, so it is a good project to p
 **Set up to hack on it**
 
 1. Fork the repo and clone your fork.
-2. Set up the sidecar venv and the Parakeet model (see `sidecar/`).
+2. Put the Parakeet model files under `models/parakeet` (see Credits for the source).
 3. Run `bash build.sh` and `open build/Remark.app`.
 4. The question prompt and its quality checks live in `evals/`. Run the quality gate with `python3 evals/eval_context.py`; it scores the shipped prompt against a set of meeting snippets.
 
 **Good places to start**
 
 - Wire up the ChatGPT/Codex engine. The menu offers it, but it still routes to Claude (`Sources/QuestionEngine.swift`, `Sources/AppState.swift`).
-- Bundle the Python sidecar, or move transcription to the sherpa-onnx C API, so a user does not install Python by hand.
 - Bundle the Geist font. Without it, the UI falls back to the system font.
 - Sharpen the question prompt. Change `evals/prompt_v4.txt` (and the matching string in `QuestionEngine.swift`), then run `evals/eval_context.py` and show the before and after scores in your PR.
 
@@ -111,7 +108,7 @@ Remark is early and personal. Known rough edges, which double as the list above 
 
 - The ChatGPT/Codex engine option routes to Claude.
 - The UI falls back to the system font unless you install Geist.
-- You fetch the Python sidecar and the Parakeet model separately; they are not bundled.
+- You fetch the Parakeet model separately; it is not bundled (the build fetches the sherpa-onnx library for you).
 
 ## License
 

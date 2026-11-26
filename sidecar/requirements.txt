@@ -1,2 +1,0 @@
-numpy==2.0.2
-sherpa-onnx==2.0.3

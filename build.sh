@@ -1,5 +1,5 @@
 #!/bin/bash
-# build.sh            -> compile + bundle + Developer ID sign (hardened runtime, stable identity)
+# build.sh            -> fetch deps + compile + bundle + Developer ID sign (hardened runtime)
 # build.sh notarize  -> the above, then notarize + staple + install to /Applications
 set -e
 cd "$(dirname "$0")"
@@ -15,20 +15,37 @@ BUNDLE_ID="${REMARK_BUNDLE_ID:-com.shekh.remark}"
 NOTARY_PROFILE="${REMARK_NOTARY_PROFILE:-remark}"
 APP=build/Remark.app
 
+# On-device transcription runs through sherpa-onnx. Fetch the pinned prebuilt universal2 library
+# (Apple Silicon + Intel) once and cache it under vendor/ (git-ignored).
+SHERPA_VER=2.0.3
+SHERPA=vendor/sherpa-onnx
+if [ ! -f "$SHERPA/lib/libsherpa-onnx-c-api.dylib" ]; then
+  echo "fetching sherpa-onnx $SHERPA_VER…"
+  rm -rf "$SHERPA"; mkdir -p "$SHERPA"
+  curl -fsSL "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VER}/sherpa-onnx-v${SHERPA_VER}-osx-universal2-shared.tar.bz2" -o /tmp/sherpa.tar.bz2
+  tar xf /tmp/sherpa.tar.bz2 -C "$SHERPA" --strip-components=1
+  rm -f /tmp/sherpa.tar.bz2
+fi
+
 echo "compiling…"
 swiftc -O \
-  Sources/Theme.swift Sources/AudioCapture.swift Sources/Transcriber.swift \
+  Sources/Theme.swift Sources/AudioCapture.swift Sources/Recognizer.swift Sources/SherpaOnnx.swift \
   Sources/QuestionEngine.swift Sources/MeetingDetector.swift Sources/AppState.swift \
   Sources/ContextStore.swift Sources/Distiller.swift Sources/Logger.swift Sources/Paths.swift \
   Sources/UI/PanelView.swift Sources/UI/DropdownView.swift Sources/UI/OnboardingView.swift \
   Sources/RemarkApp.swift \
+  -import-objc-header "$SHERPA/include/sherpa-onnx/c-api/c-api.h" -I "$SHERPA/include" \
+  -L "$SHERPA/lib" -lsherpa-onnx-c-api \
   -o build/remark \
   -framework SwiftUI -framework AppKit -framework AudioToolbox \
-  -framework AVFoundation -framework CoreMedia -framework CoreAudio
+  -framework AVFoundation -framework CoreMedia -framework CoreAudio \
+  -Xlinker -rpath -Xlinker @executable_path/../Frameworks
 
-rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp build/remark "$APP/Contents/MacOS/Remark"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# the recognizer links these two dylibs; ship them inside the bundle
+cp "$SHERPA/lib/libsherpa-onnx-c-api.dylib" "$SHERPA/lib/libonnxruntime.dylib" "$APP/Contents/Frameworks/"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -39,7 +56,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleDisplayName</key><string>Remark</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleVersion</key><string>${REMARK_BUILD:-1}</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSUIElement</key><true/>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
@@ -49,6 +66,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 echo "signing (Developer ID, hardened runtime)…"
+# Sign the embedded dylibs first (with our Team ID, so hardened-runtime library validation
+# accepts them), then the app around them.
+for dylib in "$APP"/Contents/Frameworks/*.dylib; do
+  codesign --force --options runtime --timestamp --sign "$IDENTITY" "$dylib"
+done
 codesign --force --options runtime --timestamp \
   --entitlements entitlements.plist \
   --sign "$IDENTITY" "$APP"

@@ -7,7 +7,7 @@ Thanks for taking a look. Remark is a small Swift app with a clear pipeline, so 
 You need macOS 14.4 or newer and the [Claude CLI](https://docs.claude.com/en/docs/claude-code) on your `PATH`.
 
 1. Fork the repo on GitHub and clone your fork.
-2. Set up the transcription sidecar: a Python virtualenv and the Parakeet model. `sidecar/` has the sherpa-onnx install steps and the model files it expects under `./models/parakeet`.
+2. Put the Parakeet model files under `./models/parakeet` (see the README Credits for the source). The build fetches the sherpa-onnx library itself.
 3. Build and run:
    ```bash
    bash build.sh
@@ -23,7 +23,7 @@ The README's "How it works" table maps each pipeline stage to its file. Read the
 
 - Starting and stopping on a real meeting: `Sources/MeetingDetector.swift`
 - Capturing and resampling audio: `Sources/AudioCapture.swift`
-- Transcription: `sidecar/transcribe_server.py`
+- Transcription (in-process, sherpa-onnx): `Sources/Recognizer.swift`, `Sources/SherpaOnnx.swift`
 - Writing the question: `Sources/QuestionEngine.swift`
 - Remembering past meetings: `Sources/Distiller.swift`, `Sources/ContextStore.swift`
 - The menu bar and panel: `Sources/UI/`, `Sources/Theme.swift`

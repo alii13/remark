@@ -22,10 +22,9 @@ final class AppState: ObservableObject {
     @Published var elapsed = "0:00"
     @Published var onboarded = UserDefaults.standard.bool(forKey: "onboarded")
 
-    private let root = Paths.root
     private let detector = MeetingDetector()
     private var capture: AudioCapture?
-    private var transcriber: Transcriber?
+    private var transcriber: Recognizer?
     private var qengine: QuestionEngine?
     private var startedAt: Date?
     private var ticker: Timer?
@@ -63,7 +62,7 @@ final class AppState: ObservableObject {
         startTicker()
         log("session start")
 
-        let t = Transcriber(root: root)
+        let t = Recognizer(modelDir: Paths.parakeet)
         let q = QuestionEngine(model: engine == .claude ? "sonnet" : "sonnet")
         q.autoSuggest = autoSuggest
         let c = AudioCapture()
