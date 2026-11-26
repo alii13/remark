@@ -3,7 +3,7 @@ import Foundation
 // Appends events to ~/remark/remark.log so a failed session can be diagnosed after the fact.
 // Never writes transcript text. Trims itself so it can't grow without bound.
 enum Log {
-    private static let path = "\(NSHomeDirectory())/remark/remark.log"
+    private static var path: String { Paths.log }
     private static let q = DispatchQueue(label: "remark.log")
     private static let iso = ISO8601DateFormatter()
 

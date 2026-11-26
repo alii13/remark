@@ -27,7 +27,7 @@ struct Profile {
 }
 
 enum ContextStore {
-    static var root = "\(NSHomeDirectory())/remark/context"
+    static var root = Paths.context
     static var meetingsDir: String { "\(root)/meetings" }
     private static let threadTTL: TimeInterval = 14 * 86400   // open threads expire after two weeks
     private static let service = "com.shekh.remark"

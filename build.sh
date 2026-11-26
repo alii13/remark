@@ -19,7 +19,7 @@ echo "compiling…"
 swiftc -O \
   Sources/Theme.swift Sources/AudioCapture.swift Sources/Transcriber.swift \
   Sources/QuestionEngine.swift Sources/MeetingDetector.swift Sources/AppState.swift \
-  Sources/ContextStore.swift Sources/Distiller.swift Sources/Logger.swift \
+  Sources/ContextStore.swift Sources/Distiller.swift Sources/Logger.swift Sources/Paths.swift \
   Sources/UI/PanelView.swift Sources/UI/DropdownView.swift Sources/UI/OnboardingView.swift \
   Sources/RemarkApp.swift \
   -o build/remark \

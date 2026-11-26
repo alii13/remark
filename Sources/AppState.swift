@@ -22,7 +22,7 @@ final class AppState: ObservableObject {
     @Published var elapsed = "0:00"
     @Published var onboarded = UserDefaults.standard.bool(forKey: "onboarded")
 
-    private let root = "\(NSHomeDirectory())/remark"
+    private let root = Paths.root
     private let detector = MeetingDetector()
     private var capture: AudioCapture?
     private var transcriber: Transcriber?
@@ -164,8 +164,8 @@ final class AppState: ObservableObject {
     }
 
     private func appendLearning(_ s: Suggestion, up: Bool) {
-        appendFile("\(root)/learnings.md", "- [\(up ? "like" : "avoid")] \(s.kicker) | \(s.question)\n")
-        let jdir = "\(root)/journal"
+        appendFile(Paths.learnings, "- [\(up ? "like" : "avoid")] \(s.kicker) | \(s.question)\n")
+        let jdir = Paths.journal
         try? FileManager.default.createDirectory(atPath: jdir, withIntermediateDirectories: true)
         let day = DateFormatter(); day.dateFormat = "yyyy-MM-dd"
         let obj: [String: Any] = ["at": ISO8601DateFormatter().string(from: Date()), "up": up, "gap": s.kicker, "q": s.question]

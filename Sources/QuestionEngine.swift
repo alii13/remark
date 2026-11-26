@@ -86,7 +86,7 @@ final class QuestionEngine {
     // Owner feedback from past meetings — liked/avoided questions appended by the
     // thumbs in the panel. Loaded once per session so each meeting sharpens the next.
     private static func learnings() -> String {
-        let path = "\(NSHomeDirectory())/remark/learnings.md"
+        let path = Paths.learnings
         guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return "" }
         var liked: [String] = [], avoid: [String] = []
         for raw in text.split(separator: "\n") {
