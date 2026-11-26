@@ -1,0 +1,20 @@
+# Build artifacts
+build/
+*.app
+
+# Downloaded Parakeet model (~130 MB, fetched separately)
+models/
+
+# Python sidecar virtualenv
+sidecar/.venv/
+
+# Runtime data written by the app (personal)
+learnings.md
+journal/
+context/
+
+# Eval output
+evals/results*.json
+
+# macOS
+.DS_Store
