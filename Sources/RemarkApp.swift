@@ -55,10 +55,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.demo()
         } else if env["REMARK_FORCE_LISTEN"] == "1" {
             state.startListening()   // test hook: run the real pipeline without waiting for a meeting
-        } else if state.onboarded {
+        } else if Setup.ready() {
             state.boot()
         } else {
-            showOnboarding()
+            showSetup()   // model or claude missing — gate on what exists, not a stored flag
         }
 
         hotkey = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] e in
@@ -68,8 +68,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func showOnboarding() {
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 560),
+    func showSetup() {
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 440),
                          styleMask: [.titled, .fullSizeContentView, .closable],
                          backing: .buffered, defer: false)
         w.titlebarAppearsTransparent = true
@@ -77,15 +77,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.isMovableByWindowBackground = true
         w.backgroundColor = NSColor(red: 0.047, green: 0.047, blue: 0.051, alpha: 1)
         w.center()
-        w.contentView = NSHostingView(rootView: OnboardingView(state: state) { [weak self, weak w] in
-            w?.close(); self?.onboarding = nil; self?.state.boot()
+        w.contentView = NSHostingView(rootView: SetupView { [weak self, weak w] in
+            w?.close(); self?.onboarding = nil; self?.state.completeOnboarding(); self?.state.boot()
         })
         w.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         onboarding = w
-        // if the user closes onboarding before finishing, don't leave a dead menu-bar app
-        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { [weak self] _ in
-            Task { @MainActor in if self?.state.onboarded == false { NSApp.terminate(nil) } }
+        // closing setup before it's ready leaves an app that can't work, so quit instead
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { _ in
+            Task { @MainActor in if !Setup.ready() { NSApp.terminate(nil) } }
         }
     }
 }

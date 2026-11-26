@@ -31,8 +31,8 @@ echo "compiling…"
 swiftc -O \
   Sources/Theme.swift Sources/AudioCapture.swift Sources/Recognizer.swift Sources/SherpaOnnx.swift \
   Sources/QuestionEngine.swift Sources/MeetingDetector.swift Sources/AppState.swift \
-  Sources/ContextStore.swift Sources/Distiller.swift Sources/Logger.swift Sources/Paths.swift \
-  Sources/UI/PanelView.swift Sources/UI/DropdownView.swift Sources/UI/OnboardingView.swift \
+  Sources/ContextStore.swift Sources/Distiller.swift Sources/Logger.swift Sources/Paths.swift Sources/Setup.swift \
+  Sources/UI/PanelView.swift Sources/UI/DropdownView.swift Sources/UI/SetupView.swift \
   Sources/RemarkApp.swift \
   -import-objc-header "$SHERPA/include/sherpa-onnx/c-api/c-api.h" -I "$SHERPA/include" \
   -L "$SHERPA/lib" -lsherpa-onnx-c-api \

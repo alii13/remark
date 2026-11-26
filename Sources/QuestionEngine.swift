@@ -228,10 +228,5 @@ final class QuestionEngine {
         if !out.isEmpty { DispatchQueue.main.async { self.onSuggestions?(out) } }
     }
 
-    static func claudePath() -> String {
-        for p in ["\(NSHomeDirectory())/.local/bin/claude", "/usr/local/bin/claude", "/opt/homebrew/bin/claude"] {
-            if FileManager.default.isExecutableFile(atPath: p) { return p }
-        }
-        return "claude"
-    }
+    static func claudePath() -> String { Setup.claudePath() ?? "claude" }
 }
