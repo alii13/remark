@@ -53,10 +53,13 @@ struct PanelView: View {
     var resting: some View {
         ZStack {
             GlassBG(radius: 999)
-            if state.listening {
+            if state.listening && state.health == .ok {
                 Equalizer(active: true)   // audio wiggle: Remark is hearing the room
                     .shadow(color: Ink.amber.opacity(0.5), radius: breathe ? 6 : 3)
                     .animation(.easeInOut(duration: 1.9).repeatForever(autoreverses: true), value: breathe)
+            } else if state.listening {
+                Image(systemName: "exclamationmark.triangle.fill")   // listening but not producing transcript/questions
+                    .font(.system(size: 12, weight: .semibold)).foregroundColor(Ink.amber)
             } else {
                 RemarkMark(line: 7).frame(width: 15, height: 15)
                     .opacity(0.5).scaleEffect(0.94)
@@ -64,7 +67,16 @@ struct PanelView: View {
         }
         .frame(width: 42, height: 26)
         .onTapGesture { state.pillTapped() }
-        .help(state.listening ? "Listening — tap for the question" : "Tap to start listening")
+        .help(healthHelp)
+    }
+
+    var healthHelp: String {
+        if !state.listening { return "Tap to start listening" }
+        switch state.health {
+        case .ok: return "Listening — tap for the question"
+        case .silent: return "Hearing audio but not transcribing — check the sidecar (see ~/remark/remark.log)"
+        case .error: return "A part stopped — see ~/remark/remark.log"
+        }
     }
 
     // THINKING — a small pill with a spinner.

@@ -20,6 +20,9 @@ final class AudioCapture {
     private var rateListener: AudioObjectPropertyListenerBlock?
     private let ioQueue = DispatchQueue(label: "remark.tap.io")
     private let rateQueue = DispatchQueue(label: "remark.tap.rate")   // HAL reads, kept off the IO thread
+    private var rateFrames = 0                                         // measure the real delivery rate
+    private var rateWindowStart = Date().timeIntervalSinceReferenceDate
+    private var lastBufferAt = Date().timeIntervalSinceReferenceDate
 
     // the user's own voice
     private let engine = AVAudioEngine()
@@ -203,6 +206,33 @@ final class AudioCapture {
             fed = true; st.pointee = .haveData; return inBuf
         }
         append(out, to: \.systemBuf)
+        measureRate(inBuf.frameLength, inputRate: tf.sampleRate)
+    }
+
+    // The aggregate can deliver at a rate no property reports truthfully (AirPods call mode, a
+    // mid-call device switch). Count the frames it actually delivers per second; if that differs
+    // from what the converter assumes, rebuild the converter at the real rate. Runs on ioQueue,
+    // so the rebuild is serialized with handleTap.
+    private func measureRate(_ frames: AVAudioFrameCount, inputRate: Double) {
+        let now = Date().timeIntervalSinceReferenceDate
+        // A tap delivers buffers only while audio plays. A gap means the room went quiet, so the
+        // window would mix silence with speech and read a false rate — restart it on any gap, and
+        // only trust a window of continuous audio.
+        if now - lastBufferAt > 0.3 { rateFrames = 0; rateWindowStart = now }
+        lastBufferAt = now
+        rateFrames += Int(frames)
+        let elapsed = now - rateWindowStart
+        guard elapsed >= 1.5 else { return }
+        let measured = Double(rateFrames) / elapsed
+        rateFrames = 0; rateWindowStart = now
+        let standards: [Double] = [16000, 22050, 24000, 32000, 44100, 48000]
+        // Ignore a window that lands nowhere near a real rate (still silence-polluted).
+        guard let snapped = standards.min(by: { abs($0 - measured) < abs($1 - measured) }),
+              abs(snapped - measured) / snapped < 0.1 else { return }
+        if abs(snapped - inputRate) / inputRate > 0.05 {
+            log("tap delivering ~\(Int(measured))/s (\(Int(snapped))); converter was \(Int(inputRate)), rebuilding")
+            applyRate(snapped)
+        }
     }
 
     private func startMic() {

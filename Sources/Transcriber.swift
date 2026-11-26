@@ -1,18 +1,23 @@
-// Runs the Python transcription sidecar, streams audio frames to it, and parses
-// the JSON it prints back. onFinal fires with each completed utterance.
+// Runs the Python transcription sidecar, streams audio frames to it, and parses the JSON it
+// prints back. onFinal fires with each completed utterance. If the sidecar dies mid-meeting it
+// restarts, up to a few times, then reports failure so the app can show it.
 import Foundation
 
 struct Segment { let text: String; let t0: Double; let t1: Double }
 
 final class Transcriber {
-    private let proc = Process()
-    private let inPipe = Pipe()
-    private let outPipe = Pipe()
+    private var proc = Process()
+    private var inPipe = Pipe()
+    private var outPipe = Pipe()
     private var buffer = Data()
+    private var stopping = false
+    private var restarts = 0
+    private let maxRestarts = 3
 
     var onReady: (() -> Void)?
     var onPartial: ((String) -> Void)?
     var onFinal: ((Segment) -> Void)?
+    var onFailure: (() -> Void)?   // fired once restarts are exhausted
 
     private let python: String
     private let script: String
@@ -25,20 +30,39 @@ final class Transcriber {
     }
 
     func start() {
+        proc = Process(); inPipe = Pipe(); outPipe = Pipe()   // a Process runs once; recreate to restart
+        buffer.removeAll()
         proc.executableURL = URL(fileURLWithPath: python)
         proc.arguments = [script, model]
         proc.standardInput = inPipe
         proc.standardOutput = outPipe
         proc.standardError = FileHandle.nullDevice
-        outPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
-            self?.ingest(h.availableData)
+        outPipe.fileHandleForReading.readabilityHandler = { [weak self] h in self?.ingest(h.availableData) }
+        proc.terminationHandler = { [weak self] p in self?.handleExit(p.terminationStatus) }
+        do { try proc.run(); log("sidecar started") }
+        catch { log("sidecar failed to start: \(error)"); DispatchQueue.main.async { self.onFailure?() } }
+    }
+
+    private func handleExit(_ code: Int32) {
+        if stopping { return }
+        guard restarts < maxRestarts else {
+            log("sidecar exited code=\(code); restarts exhausted")
+            DispatchQueue.main.async { self.onFailure?() }
+            return
         }
-        do { try proc.run() } catch { log("sidecar failed: \(error)") }
+        restarts += 1
+        log("sidecar exited code=\(code); restarting \(restarts)/\(maxRestarts)")
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, !self.stopping else { return }
+            self.start()
+        }
     }
 
     func stop() {
-        inPipe.fileHandleForWriting.closeFile()
+        stopping = true
+        proc.terminationHandler = nil
         outPipe.fileHandleForReading.readabilityHandler = nil
+        try? inPipe.fileHandleForWriting.close()
         if proc.isRunning { proc.terminate() }
     }
 
@@ -69,5 +93,3 @@ final class Transcriber {
         }
     }
 }
-
-func log(_ m: String) { FileHandle.standardError.write(("[remark] " + m + "\n").data(using: .utf8)!) }

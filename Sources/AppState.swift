@@ -4,6 +4,7 @@ import AppKit
 
 enum Phase { case hidden, resting, thinking, active }
 enum Engine: String { case claude = "Claude", codex = "ChatGPT" }
+enum Health { case ok, error, silent }   // ok | a part broke | hearing audio but no transcript
 
 @MainActor
 final class AppState: ObservableObject {
@@ -11,6 +12,7 @@ final class AppState: ObservableObject {
     @Published var phase: Phase = .hidden
     @Published var suggestions: [Suggestion] = []
     @Published var listening = false
+    @Published var health: Health = .ok
     @Published var autoStart = true
     @Published var autoSuggest = true          // Auto vs Manual
     @Published var engine: Engine = .claude
@@ -30,6 +32,7 @@ final class AppState: ObservableObject {
     private var collapseTimer: Timer?
     private var meetingLines: [String] = []   // full transcript of the meeting, distilled on stop
     private let idleLimit: TimeInterval = 150   // stop an orphan (manual) session after this much silence
+    private var lastTranscriptAt = Date()       // when a partial/final last arrived, for the health check
 
     func boot() {
         detector.onChange = { [weak self] inMeeting in
@@ -52,10 +55,13 @@ final class AppState: ObservableObject {
         guard !listening else { return }
         listening = true
         phase = .resting
+        health = .ok
         suggestions = []
         meetingLines = []
         startedAt = Date()
+        lastTranscriptAt = Date()
         startTicker()
+        log("session start")
 
         let t = Transcriber(root: root)
         let q = QuestionEngine(model: engine == .claude ? "sonnet" : "sonnet")
@@ -63,10 +69,18 @@ final class AppState: ObservableObject {
         let c = AudioCapture()
         c.captureMic = micOn
 
+        let gotText: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.lastTranscriptAt = Date()
+            if self.health == .silent { self.health = .ok }
+        }
+        t.onPartial = { _ in DispatchQueue.main.async { gotText() } }
         t.onFinal = { [weak self, weak q] seg in
             q?.addFinal(seg.text)
-            DispatchQueue.main.async { self?.meetingLines.append(seg.text) }
+            DispatchQueue.main.async { gotText(); self?.meetingLines.append(seg.text) }
         }
+        t.onFailure = { [weak self] in DispatchQueue.main.async { self?.health = .error; log("health: transcriber failed") } }
+        q.onFailure = { [weak self] in DispatchQueue.main.async { self?.health = .error; log("health: question engine failed") } }
         q.onThinking = { [weak self] thinking in
             guard let self, self.listening else { return }
             if thinking {
@@ -90,14 +104,16 @@ final class AppState: ObservableObject {
         c.onFrames = { [weak t] frames in t?.feed(frames) }
 
         t.start(); q.start()
-        do { try c.start() } catch { NSLog("Remark: audio capture failed: \(error)") }
+        do { try c.start() } catch { health = .error; log("health: audio capture failed to start: \(error)") }
         transcriber = t; qengine = q; capture = c
     }
 
     func stopListening() {
         guard listening else { return }
         listening = false
+        health = .ok
         phase = .hidden   // meeting over → widget disappears
+        log("session stop")
         capture?.stop(); transcriber?.stop(); qengine?.stop()
         capture = nil; transcriber = nil; qengine = nil
         ticker?.invalidate(); ticker = nil
@@ -203,6 +219,11 @@ final class AppState: ObservableObject {
                 // silent too long, was left on by accident — stop it.
                 if self.listening, !self.inMeeting, let c = self.capture, c.secondsSinceAudio() > self.idleLimit {
                     self.stopListening(); return
+                }
+                // hearing real audio but no transcript for 30s -> transcription is stuck, not silence
+                if self.listening, self.health != .error, let c = self.capture,
+                   c.secondsSinceAudio() < 4, Date().timeIntervalSince(self.lastTranscriptAt) > 30 {
+                    if self.health != .silent { log("health: audio but no transcript for 30s"); self.health = .silent }
                 }
                 let t = Int(Date().timeIntervalSince(s))
                 self.elapsed = String(format: "%d:%02d", t / 60, t % 60)

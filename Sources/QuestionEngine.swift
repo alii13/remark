@@ -6,10 +6,13 @@ import Foundation
 struct Suggestion { let kicker: String; let question: String; let at: String }
 
 final class QuestionEngine {
-    private let proc = Process()
-    private let inPipe = Pipe()
-    private let outPipe = Pipe()
+    private var proc = Process()
+    private var inPipe = Pipe()
+    private var outPipe = Pipe()
     private var buffer = Data()
+    private var stopping = false
+    private var restarts = 0
+    private let maxRestarts = 3
 
     private var transcript: [String] = []
     private var pending = false
@@ -19,6 +22,7 @@ final class QuestionEngine {
 
     var onSuggestions: (([Suggestion]) -> Void)?
     var onThinking: ((Bool) -> Void)?
+    var onFailure: (() -> Void)?   // fired once restarts are exhausted, or on a model/auth error
     var autoSuggest = true
     var model: String
     var role: String
@@ -101,6 +105,8 @@ final class QuestionEngine {
     }
 
     func start() {
+        proc = Process(); inPipe = Pipe(); outPipe = Pipe()   // a Process runs once; recreate to restart
+        buffer.removeAll(); pending = false; sendsSincePrimer = 0
         proc.executableURL = URL(fileURLWithPath: Self.claudePath())
         proc.arguments = ["-p", "--model", model,
                           "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
@@ -110,12 +116,31 @@ final class QuestionEngine {
         proc.standardOutput = outPipe
         proc.standardError = FileHandle.nullDevice
         outPipe.fileHandleForReading.readabilityHandler = { [weak self] h in self?.ingest(h.availableData) }
-        do { try proc.run() } catch { log("claude failed: \(error)") }
+        proc.terminationHandler = { [weak self] p in self?.handleExit(p.terminationStatus) }
+        do { try proc.run(); log("claude session started") }
+        catch { log("claude failed to start: \(error)"); DispatchQueue.main.async { self.onFailure?() } }
+    }
+
+    private func handleExit(_ code: Int32) {
+        if stopping { return }
+        guard restarts < maxRestarts else {
+            log("claude session exited code=\(code); restarts exhausted")
+            DispatchQueue.main.async { self.onFailure?() }
+            return
+        }
+        restarts += 1
+        log("claude session exited code=\(code); restarting \(restarts)/\(maxRestarts)")
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, !self.stopping else { return }
+            self.start()
+        }
     }
 
     func stop() {
-        inPipe.fileHandleForWriting.closeFile()
+        stopping = true
+        proc.terminationHandler = nil
         outPipe.fileHandleForReading.readabilityHandler = nil
+        try? inPipe.fileHandleForWriting.close()
         if proc.isRunning { proc.terminate() }
         queue.async { self.transcript.removeAll() }
     }
@@ -163,12 +188,25 @@ final class QuestionEngine {
             while let nl = self.buffer.firstIndex(of: 0x0a) {
                 let line = self.buffer.subdata(in: self.buffer.startIndex..<nl)
                 self.buffer.removeSubrange(self.buffer.startIndex...nl)
-                guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
-                if obj["type"] as? String == "result", let text = obj["result"] as? String {
-                    self.pending = false
-                    DispatchQueue.main.async { self.onThinking?(false) }
-                    self.parse(text)
+                guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                      let type = obj["type"] as? String else { continue }
+                if type == "rate_limit_event",
+                   let info = obj["rate_limit_info"] as? [String: Any],
+                   let status = info["status"] as? String, status != "allowed" {
+                    log("claude rate limit: \(status)")
+                    DispatchQueue.main.async { self.onFailure?() }
+                    continue
                 }
+                guard type == "result" else { continue }
+                self.pending = false
+                DispatchQueue.main.async { self.onThinking?(false) }
+                if obj["is_error"] as? Bool == true {
+                    let msg = (obj["result"] as? String) ?? "unknown"
+                    log("claude result error: \(msg.prefix(120))")
+                    DispatchQueue.main.async { self.onFailure?() }
+                    continue
+                }
+                if let text = obj["result"] as? String { self.parse(text) }
             }
         }
     }
@@ -180,9 +218,12 @@ final class QuestionEngine {
         for raw in text.split(separator: "\n") {
             let s = raw.trimmingCharacters(in: .whitespaces)
             if s == "-" || s.isEmpty { continue }
+            // Only a well-formed "gap | question" line becomes a suggestion. Anything else
+            // (an error message, stray prose) is dropped, never shown as a question.
             let parts = s.split(separator: "|", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-            if parts.count == 2 { out.append(Suggestion(kicker: parts[0], question: parts[1], at: now)) }
-            else { out.append(Suggestion(kicker: "worth asking", question: s, at: now)) }
+            if parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty {
+                out.append(Suggestion(kicker: parts[0], question: parts[1], at: now))
+            }
         }
         if !out.isEmpty { DispatchQueue.main.async { self.onSuggestions?(out) } }
     }

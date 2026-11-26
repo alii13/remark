@@ -12,6 +12,7 @@ sidecar/.venv/
 learnings.md
 journal/
 context/
+remark.log
 
 # Eval output
 evals/results*.json

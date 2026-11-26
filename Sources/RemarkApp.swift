@@ -10,8 +10,12 @@ struct RemarkApp: App {
         MenuBarExtra {
             DropdownView(state: state)
         } label: {
-            // amber mark in the menu bar
-            Image(nsImage: Self.menuIcon)
+            // the mark normally; a warning when listening but not producing transcript/questions
+            if state.listening && state.health != .ok {
+                Image(systemName: "exclamationmark.triangle.fill")
+            } else {
+                Image(nsImage: Self.menuIcon)
+            }
         }
         .menuBarExtraStyle(.window)
     }
@@ -46,8 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         panel = PanelController(state: state)
 
-        if ProcessInfo.processInfo.environment["REMARK_DEMO"] == "1" {
+        let env = ProcessInfo.processInfo.environment
+        if env["REMARK_DEMO"] == "1" {
             state.demo()
+        } else if env["REMARK_FORCE_LISTEN"] == "1" {
+            state.startListening()   // test hook: run the real pipeline without waiting for a meeting
         } else if state.onboarded {
             state.boot()
         } else {
