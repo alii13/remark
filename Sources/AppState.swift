@@ -228,8 +228,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    // Drives the exact sequence the user reported, against the real state methods. Step 4
-    // (spinner done after a minimize) fails on the old code and passes now, so this is a real check.
+    // Asserts, against the real state methods, that a minimized question stays hidden through a
+    // background engine reply, a repeated question never re-opens the panel, a new one does, and
+    // the read window tucks the panel away. Run with REMARK_SELFCHECK=1.
     func runSelfCheck() -> Bool {
         listening = true; phase = .resting; suggestions = []; shownQuestions = []; readStart = nil
         var ok = true
@@ -242,7 +243,7 @@ final class AppState: ObservableObject {
         applySuggestions([q1]); check(phase == .active, "Q1 shown -> active")
         collapse();             check(phase == .resting, "minimize -> resting")
         applyThinking(true);    check(phase == .resting, "thinking, list kept -> stays resting")
-        applyThinking(false);   check(phase == .resting, "spinner done does NOT re-open (the reported bug)")
+        applyThinking(false);   check(phase == .resting, "spinner done does NOT re-open the panel")
         applySuggestions([q1]); check(phase == .resting, "same question again -> no re-pop")
         applySuggestions([q2]); check(phase == .active, "new question -> active")
         readWindowDone();       check(phase == .resting, "read window elapsed -> resting")
