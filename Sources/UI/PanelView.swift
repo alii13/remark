@@ -130,9 +130,25 @@ struct PanelView: View {
     }
 
     // ACTIVE — the question panel.
+    // A thin amber bar across the top that depletes over the read window, then the panel tucks away.
+    @ViewBuilder var readBar: some View {
+        if let start = state.readStart {
+            TimelineView(.animation) { ctx in
+                let frac = max(0, min(1, 1 - ctx.date.timeIntervalSince(start) / AppState.readWindow))
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Ink.amber.opacity(0.85))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 3)
+                    .scaleEffect(x: frac, anchor: .leading)
+                    .padding(.horizontal, 12).padding(.top, 9)
+            }
+        }
+    }
+
     var panel: some View {
         ZStack(alignment: .topLeading) {
             GlassBG(radius: 20)
+            readBar
             VStack(alignment: .leading, spacing: 20) {
                 HStack(spacing: 10) {
                     RemarkMark().frame(width: 19, height: 19)
