@@ -47,6 +47,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ note: Notification) {
         signal(SIGPIPE, SIG_IGN)   // a write to a dead claude pipe must not abort us
+        if ProcessInfo.processInfo.environment["REMARK_SELFCHECK"] == "1" {
+            exit(state.runSelfCheck() ? 0 : 1)
+        }
         NSApp.setActivationPolicy(.accessory)
         panel = PanelController(state: state)
         _ = Updater.shared   // start checking for updates in the background

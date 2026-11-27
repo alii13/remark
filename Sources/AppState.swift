@@ -9,6 +9,7 @@ enum Health { case ok, error, silent }   // ok | a part broke | hearing audio bu
 @MainActor
 final class AppState: ObservableObject {
     static let shared = AppState()
+    static let readWindow: TimeInterval = 18   // seconds a question stays open before it tucks itself to the pill
     @Published var phase: Phase = .hidden
     @Published var suggestions: [Suggestion] = []
     @Published var listening = false
@@ -20,6 +21,7 @@ final class AppState: ObservableObject {
     @Published var systemOn = true
     @Published var micOn = false   // off by default: our own mic use would keep auto-detect stuck "in a meeting"
     @Published var elapsed = "0:00"
+    @Published var readStart: Date?            // when the current question's read window began; drives the top bar
     @Published var onboarded = UserDefaults.standard.bool(forKey: "onboarded")
 
     private let detector = MeetingDetector()
@@ -30,6 +32,7 @@ final class AppState: ObservableObject {
     private var ticker: Timer?
     private var collapseTimer: Timer?
     private var meetingLines: [String] = []   // full transcript of the meeting, distilled on stop
+    private var shownQuestions = Set<String>()  // every question surfaced this session; the same one never re-pops
     private let idleLimit: TimeInterval = 150   // stop an orphan (manual) session after this much silence
     private var lastTranscriptAt = Date()       // when a partial/final last arrived, for the health check
 
@@ -47,7 +50,7 @@ final class AppState: ObservableObject {
 
     func pillTapped() {
         if !listening { startListening() }
-        else if !suggestions.isEmpty { phase = .active }
+        else if !suggestions.isEmpty { showPanel() }
     }
 
     func startListening() {
@@ -57,6 +60,8 @@ final class AppState: ObservableObject {
         health = .ok
         suggestions = []
         meetingLines = []
+        shownQuestions = []
+        readStart = nil
         startedAt = Date()
         lastTranscriptAt = Date()
         startTicker()
@@ -80,26 +85,8 @@ final class AppState: ObservableObject {
         }
         t.onFailure = { [weak self] in DispatchQueue.main.async { self?.health = .error; log("health: transcriber failed") } }
         q.onFailure = { [weak self] in DispatchQueue.main.async { self?.health = .error; log("health: question engine failed") } }
-        q.onThinking = { [weak self] thinking in
-            guard let self, self.listening else { return }
-            if thinking {
-                if self.suggestions.isEmpty { self.phase = .thinking }
-            } else {
-                self.phase = self.suggestions.isEmpty ? .resting : .active   // '-' is the common reply; don't stick on the spinner
-            }
-        }
-        q.onSuggestions = { [weak self] sugs in
-            guard let self, self.listening else { return }
-            // newest on top, keep the last 4 distinct so earlier ones stay readable
-            var list = self.suggestions
-            for s in sugs.reversed() {
-                list.removeAll { $0.question.caseInsensitiveCompare(s.question) == .orderedSame }
-                list.insert(s, at: 0)
-            }
-            self.suggestions = Array(list.prefix(4))
-            self.phase = .active
-            self.scheduleCollapse()
-        }
+        q.onThinking = { [weak self] thinking in self?.applyThinking(thinking) }
+        q.onSuggestions = { [weak self] sugs in self?.applySuggestions(sugs) }
         c.onFrames = { [weak t] frames in t?.feed(frames) }
 
         t.start(); q.start()
@@ -135,21 +122,54 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func scheduleCollapse() {
-        collapseTimer?.invalidate()
-        collapseTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.listening else { return }
-                self.phase = .resting   // tuck to the pill but keep the questions to re-open
-            }
+    // The engine reports when it starts and stops a read. Dropping the spinner must not, on its
+    // own, re-open the panel: it only leaves the thinking state. The panel opens from applySuggestions.
+    func applyThinking(_ thinking: Bool) {
+        guard listening else { return }
+        if thinking {
+            if suggestions.isEmpty { phase = .thinking }
+        } else if phase == .thinking {
+            phase = .resting
         }
+    }
+
+    // A reply arrived. Show only questions not seen this session, so a re-emitted question never
+    // re-pops; a genuinely new one opens the panel and restarts the read window.
+    func applySuggestions(_ sugs: [Suggestion]) {
+        guard listening else { return }
+        let fresh = sugs.filter { !shownQuestions.contains($0.question.lowercased()) }
+        guard !fresh.isEmpty else { return }
+        for s in fresh { shownQuestions.insert(s.question.lowercased()) }
+        var list = suggestions                        // newest on top, keep the last 4 distinct
+        for s in fresh.reversed() {
+            list.removeAll { $0.question.caseInsensitiveCompare(s.question) == .orderedSame }
+            list.insert(s, at: 0)
+        }
+        suggestions = Array(list.prefix(4))
+        showPanel()
+    }
+
+    // Open the panel and start the read window; the top bar depletes over it, then it tucks away.
+    func showPanel() {
+        phase = .active
+        readStart = Date()
+        collapseTimer?.invalidate()
+        collapseTimer = Timer.scheduledTimer(withTimeInterval: Self.readWindow, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.readWindowDone() }
+        }
+    }
+
+    private func readWindowDone() {
+        guard listening, phase == .active else { return }
+        readStart = nil
+        phase = .resting   // read window elapsed; tuck to the pill. The question won't re-pop.
     }
 
     func toggleListening() { listening ? stopListening() : startListening() }
 
     func ask() {
         if !listening { startListening() }
-        if suggestions.isEmpty { phase = .thinking }
+        if suggestions.isEmpty { phase = .thinking } else { showPanel() }
         qengine?.ask()
     }
 
@@ -159,7 +179,7 @@ final class AppState: ObservableObject {
     func rate(_ s: Suggestion, up: Bool) {
         appendLearning(s, up: up)
         suggestions.removeAll { $0.question.caseInsensitiveCompare(s.question) == .orderedSame }
-        if suggestions.isEmpty { phase = .resting }
+        if suggestions.isEmpty { collapseTimer?.invalidate(); readStart = nil; phase = .resting }
     }
 
     private func appendLearning(_ s: Suggestion, up: Bool) {
@@ -181,27 +201,54 @@ final class AppState: ObservableObject {
         }
     }
 
-    func dismiss() { if listening { phase = .resting; suggestions = [] } }
+    func dismiss() { if listening { collapseTimer?.invalidate(); readStart = nil; phase = .resting; suggestions = [] } }
 
-    func collapse() { if listening { phase = .resting } }          // minimize to the mark, keep questions
+    func collapse() {                                              // minimize to the mark, keep questions
+        guard listening else { return }
+        collapseTimer?.invalidate(); readStart = nil
+        phase = .resting
+    }
     func expand() {                                                 // tap the mark to bring them back
         guard listening else { return }
-        if !suggestions.isEmpty { phase = .active } else { ask() }
+        if !suggestions.isEmpty { showPanel() } else { ask() }
     }
 
     func demo() {
         listening = true
         phase = .resting
         startedAt = Date(); startTicker()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { self.phase = .thinking }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { self.applyThinking(true) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-            self.suggestions = [
+            self.applyThinking(false)
+            self.applySuggestions([
                 Suggestion(kicker: "number has no source", question: "Where did the eight percent come from, and who verified it?", at: "32:40"),
                 Suggestion(kicker: "decision unmade", question: "Is the free tier kept, or cut to three seats?", at: "31:58"),
                 Suggestion(kicker: "no rollback plan", question: "If prices go wrong mid-migration, how do we roll back?", at: "30:12"),
-            ]
-            self.phase = .active
+            ])
         }
+    }
+
+    // Asserts, against the real state methods, that a minimized question stays hidden through a
+    // background engine reply, a repeated question never re-opens the panel, a new one does, and
+    // the read window tucks the panel away. Run with REMARK_SELFCHECK=1.
+    func runSelfCheck() -> Bool {
+        listening = true; phase = .resting; suggestions = []; shownQuestions = []; readStart = nil
+        var ok = true
+        func check(_ cond: Bool, _ label: String) {
+            FileHandle.standardError.write(Data(((cond ? "PASS " : "FAIL ") + label + "\n").utf8))
+            ok = ok && cond
+        }
+        let q1 = Suggestion(kicker: "g", question: "Q1?", at: "0:00")
+        let q2 = Suggestion(kicker: "g", question: "Q2?", at: "0:00")
+        applySuggestions([q1]); check(phase == .active, "Q1 shown -> active")
+        collapse();             check(phase == .resting, "minimize -> resting")
+        applyThinking(true);    check(phase == .resting, "thinking, list kept -> stays resting")
+        applyThinking(false);   check(phase == .resting, "spinner done does NOT re-open the panel")
+        applySuggestions([q1]); check(phase == .resting, "same question again -> no re-pop")
+        applySuggestions([q2]); check(phase == .active, "new question -> active")
+        readWindowDone();       check(phase == .resting, "read window elapsed -> resting")
+        applyThinking(false);   check(phase == .resting, "post-window spinner done stays resting")
+        return ok
     }
 
     func completeOnboarding() {
